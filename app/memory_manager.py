@@ -1,4 +1,4 @@
-from langchain.memory import ConversationBufferMemory
+from langchain.memory import ConversationBufferMemory, ConversationTokenBufferMemory
 from langchain_core.chat_history import BaseChatMessageHistory
 from typing import Dict
 
@@ -7,8 +7,9 @@ _memory_store:Dict[str, ConversationBufferMemory] = {}
 def get_memory(session_id: str) -> BaseChatMessageHistory:
     if session_id not in _memory_store:
         print("Creating memory store")
-        _memory_store[session_id] = ConversationBufferMemory(
+        _memory_store[session_id] = ConversationTokenBufferMemory(
             return_messages=True,
+            max_token_limit=1024,
             memory_key="chat_history",
             input_key="input",
             output_key="answer"  

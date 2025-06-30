@@ -40,7 +40,6 @@ def ingest_documents(filepath:str):
         embeddings=embeddings
     )
     vector_store.add_documents(chunks)
-
     print("Ingestion complete")
 
 
