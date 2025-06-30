@@ -16,6 +16,9 @@ from langchain.memory import ConversationBufferMemory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
+import logging
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
@@ -33,6 +36,7 @@ def get_rag_chain():
         embeddings=embedding_model
     )
 
+    logger.info("Setting up vector store retriever...")
     retriever = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 5})
 
     llm = ChatGoogleGenerativeAI(
@@ -47,6 +51,7 @@ def get_rag_chain():
             ("human", "{input}")
         ])
     
+    logger.info("Creating history-aware retriever...")
     history_retriever = create_history_aware_retriever(
         llm = llm,
         retriever= retriever,
@@ -60,6 +65,7 @@ def get_rag_chain():
         ("human", "{input}"),
     ])
 
+    logger.info("Creating document combination chain...")
     doc_chain = create_stuff_documents_chain(llm = llm, prompt = qa_prompt)
     
     chain=create_retrieval_chain(
@@ -67,7 +73,7 @@ def get_rag_chain():
         combine_docs_chain = doc_chain
     )
 
-    return chain
+    return chain, llm
 
 
 if __name__ == "__main__":
