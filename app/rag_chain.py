@@ -16,19 +16,15 @@ from langchain.memory import ConversationBufferMemory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
-# Load environment variables
 load_dotenv()
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "org-support-chat")
 
-_memory_store = {}
-
 def get_rag_chain():
 
     embedding_model = get_gemini_embeddings()
-
 
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     vector_store = Qdrant(
@@ -71,23 +67,7 @@ def get_rag_chain():
         combine_docs_chain = doc_chain
     )
 
-    def get_memory(session_id: str):
-        if session_id not in _memory_store:
-            _memory_store[session_id] = ConversationBufferMemory(
-                return_messages=True,
-                memory_key="chat_history"
-            )
-        return _memory_store[session_id].chat_memory
-
-    chain_with_memory = RunnableWithMessageHistory(
-        runnable=chain,
-        get_session_history=get_memory,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer"
-    )
-
-    return chain_with_memory
+    return chain
 
 
 if __name__ == "__main__":

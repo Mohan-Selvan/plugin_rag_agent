@@ -11,10 +11,14 @@ def get_memory(session_id: str) -> BaseChatMessageHistory:
             return_messages=True,
             memory_key="chat_history",
             input_key="input",
-            output_key="output"  
+            output_key="answer"  
         )
 
-    print(f"Session_id : {session_id}, Memory : {_memory_store[session_id]}")
-    for msg in _memory_store[session_id].chat_memory.messages:
-        print(f" - {msg.type.upper()}: {msg.content}")
+    print("\n--- MEMORY DEBUG ---")
+
+    if session_id in _memory_store:
+        for msg in _memory_store[session_id].chat_memory.messages:
+            print(f"{msg.type.upper()}: {msg.content}")
+    print("--------------------\n")
+
     return _memory_store[session_id].chat_memory
