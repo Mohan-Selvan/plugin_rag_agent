@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat Widget</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 0; }
+    #chat { height: 90%; overflow-y: auto; padding: 10px; }
+    input { width: 100%; padding: 10px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <input id="msg" placeholder="Type your message...">
+  <script>
+    const chat = document.getElementById('chat');
+    const msg = document.getElementById('msg');
+    const session_id = "session-" + Math.random().toString(36).substring(2);
+
+    msg.addEventListener("keypress", async function (e) {
+      if (e.key === "Enter") {
+        const userMsg = msg.value;
+        chat.innerHTML += `<div><b>You:</b> ${userMsg}</div>`;
+        msg.value = "";
+
+        const res = await fetch("https://your-api.com/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: userMsg, session_id })
+        });
+
+        const data = await res.json();
+        chat.innerHTML += `<div><b>Bot:</b> ${data.response}</div>`;
+        chat.scrollTop = chat.scrollHeight;
+      }
+    });
+  </script>
+</body>
+</html>
