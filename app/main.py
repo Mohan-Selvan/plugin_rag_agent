@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-import slowapi
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -27,9 +27,11 @@ class ChatRequest(BaseModel):
     message : str
     session_id : str
 
+
+
 api = FastAPI()
 api.mount("/static", StaticFiles(directory="static"), name="static")
-api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # or restrict to specific domains
@@ -50,15 +52,32 @@ memory_chain = RunnableWithMessageHistory(
     output_messages_key="answer"
 )
 
-# Exceptions
-@api.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(request, exc):
-    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
-
 @api.middleware("http")
 async def inject_rate_limiter(request: Request, call_next):
     request.state.limiter = limiter
     return await call_next(request)
+
+
+@api.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"response": "Rate limit exceeded. Please try again in a few seconds."}
+    )
+
+@api.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"response": exc.detail or "An error occurred."}
+    )
+
+@api.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"response": "An internal server error occurred. Please try again later."}
+    )
 
 # Custom middleware to set X-Frame-Options header
 # @api.middleware("http")
@@ -88,7 +107,7 @@ async def serve_widget(request: Request):
     
 @traceable(name="RAG Support Chat")
 @api.post("/chat")
-@limiter.limit("3/minute")
+@limiter.limit("1/minute")
 async def chat(req: ChatRequest, request: Request):
 
     logger.info(f"Received message: {req.message} from session: {req.session_id}")
@@ -105,6 +124,6 @@ async def chat(req: ChatRequest, request: Request):
         return {"response": result["answer"]}
     
     except Exception as e:
-        logger.exception("Error processing chain")
-        return {"error": "Internal service error"}
+        logger.error(f"Exception occured: session : [{req.session_id}] : {e}")
+        return {"response": "Sorry, something went wrong. Please try again a few minutes."}
     
