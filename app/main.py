@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from app.rag_chain import get_rag_chain
-import app.rag_chain
 from app.memory_manager import get_memory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langsmith import traceable
@@ -9,7 +8,12 @@ from langsmith import traceable
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+
+import slowapi
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 import logging
 
@@ -24,7 +28,8 @@ class ChatRequest(BaseModel):
     session_id : str
 
 api = FastAPI()
-
+api.mount("/static", StaticFiles(directory="static"), name="static")
+api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # or restrict to specific domains
@@ -33,18 +38,39 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
-# Custom middleware to set X-Frame-Options header
+limiter = Limiter(key_func=get_remote_address)
+api.state.limiter = limiter
+
+base_chain, llm = get_rag_chain()
+memory_chain = RunnableWithMessageHistory(
+    runnable=base_chain,
+    get_session_history=lambda session_id: get_memory(session_id=session_id, llm=llm),
+    input_messages_key="input",
+    history_messages_key="chat_history",
+    output_messages_key="answer"
+)
+
+# Exceptions
+@api.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc):
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
+
 @api.middleware("http")
-async def allow_iframe_localhost(request: Request, call_next):
-    response: Response = await call_next(request)
+async def inject_rate_limiter(request: Request, call_next):
+    request.state.limiter = limiter
+    return await call_next(request)
 
-    # Only allow iframe embedding from localhost during local dev
-    if request.client.host in ["127.0.0.1", "localhost"]:
-        response.headers["X-Frame-Options"] = "ALLOWALL"
+# Custom middleware to set X-Frame-Options header
+# @api.middleware("http")
+# async def allow_iframe_localhost(request: Request, call_next):
+#     response: Response = await call_next(request)
 
-    return response
+#     # Only allow iframe embedding from localhost during local dev
+#     if request.client.host in ["127.0.0.1", "localhost"]:
+#         response.headers["X-Frame-Options"] = "ALLOWALL"
 
-api.mount("/static", StaticFiles(directory="static"), name="static")
+#     return response
+
 
 @api.get("/chat-ui", response_class=HTMLResponse)
 async def serve_chat_ui():
@@ -58,20 +84,12 @@ async def serve_widget(request: Request):
 
     with open("static/widgets/widget.js") as f:
         return HTMLResponse(content=f.read(), media_type="application/javascript")
-
-base_chain, llm = get_rag_chain()
-memory_chain = RunnableWithMessageHistory(
-    runnable=base_chain,
-    get_session_history=lambda session_id: get_memory(session_id=session_id, llm=llm),
-    input_messages_key="input",
-    history_messages_key="chat_history",
-    output_messages_key="answer"
-)
-
-
+    
+    
 @traceable(name="RAG Support Chat")
 @api.post("/chat")
-async def chat(req: ChatRequest):
+@limiter.limit("3/minute")
+async def chat(req: ChatRequest, request: Request):
 
     logger.info(f"Received message: {req.message} from session: {req.session_id}")
 
