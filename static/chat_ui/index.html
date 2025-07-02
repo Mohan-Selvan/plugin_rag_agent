@@ -16,7 +16,13 @@
   <script>
     const chatBox = document.getElementById("chat-box");
     const input = document.getElementById("input");
-    const session_id = "test-session"; // You can generate random IDs per visit
+
+    let session_id = sessionStorage.getItem("session_id");
+    if (!session_id) {
+      session_id = "sess-" + Math.random().toString(36).substring(2, 10);
+      sessionStorage.setItem("session_id", session_id);
+      console.log("Created a new session id : ", session_id)
+    }
 
     input.addEventListener("keydown", async (e) => {
       if (e.key === "Enter" && input.value.trim()) {
@@ -24,6 +30,8 @@
         input.value = "";
         chatBox.innerHTML += `<div class="msg-user"><b>You:</b> ${msg}</div>`;
         chatBox.scrollTop = chatBox.scrollHeight;
+
+        console.log("Using session id : ", session_id)
 
         try {
           const res = await fetch("http://localhost:8000/chat", {

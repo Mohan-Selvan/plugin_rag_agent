@@ -1,9 +1,10 @@
+import json
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from app.rag_chain import get_rag_chain
 from app.memory_manager import get_memory
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langsmith import traceable
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request, Response
@@ -12,8 +13,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi.util import get_ipaddr
 from slowapi.errors import RateLimitExceeded
+
+from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+
+from langsmith import traceable
+import hashlib
 
 import logging
 
@@ -21,13 +28,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
+
 logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     message : str
-    session_id : str
-
-
+    session_id : Optional[str] = None
 
 api = FastAPI()
 api.mount("/static", StaticFiles(directory="static"), name="static")
@@ -40,7 +46,15 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
-limiter = Limiter(key_func=get_remote_address)
+def ip_key_func(request):
+    return get_ipaddr(request)
+
+def session_key_func(request):
+    return getattr(request.state, "session_id", "unknown-session")
+
+
+
+limiter = Limiter(key_func=session_key_func)
 api.state.limiter = limiter
 
 base_chain, llm = get_rag_chain()
@@ -52,10 +66,78 @@ memory_chain = RunnableWithMessageHistory(
     output_messages_key="answer"
 )
 
+sessions = {}
+
+def get_client_ip(request: Request) -> Optional[str]:
+    # Only trust X-Forwarded-For if behind a proxy
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        ip = xff.split(",")[0].strip()
+        if ip:
+            return ip
+
+    if request.client and request.client.host:
+        return request.client.host
+
+    return None
+
+def generate_session_id(request: Request) -> str:
+    # Prefer client-provided session_id from query or body (middleware or route handles this)
+    # Else fallback to IP-based hashed ID (avoid raw IP)
+    ip = get_client_ip(request)
+    if not ip:
+        raise ValueError("Unable to determine client identity. Session ID required.")
+
+    # Use a hash to avoid exposing IP directly
+    return hashlib.sha256(ip.encode()).hexdigest()[:16]
+
+# def create_session(request: Request):
+#     session_id = str(uuid4())
+
+#     now_utc = datetime.now(timezone.utc)
+
+#     sessions[session_id] = {
+#         "ip": request.client.host,
+#         "created" : now_utc,
+#         "expires" : now_utc + timedelta(hours = 1)
+#     }
+
+#     return 
+
 @api.middleware("http")
 async def inject_rate_limiter(request: Request, call_next):
+    
     request.state.limiter = limiter
-    return await call_next(request)
+
+    session_id = ""
+
+    # 1. Try from headers
+    if "x-session-id" in request.headers:
+        session_id = request.headers["x-session-id"]
+
+    # 2. Try from body (for POST with JSON)
+    elif request.method in ("POST", "PUT", "PATCH"):
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                body = json.loads(body_bytes)
+                if "session_id" in body:
+                    session_id = body["session_id"]
+                # Reset the body so downstream can access it
+                request._receive = lambda: {"type": "http.request", "body": body_bytes}
+        except Exception:
+            pass
+
+    # 3. Try from query params (as fallback)
+    elif "session_id" in request.query_params:
+        session_id = request.query_params["session_id"]
+
+    # Set session_id in state for logging, tracing, etc.
+    request.state.session_id = session_id
+
+    response = await call_next(request)
+    response.headers["X-Session-ID"] = request.state.session_id
+    return response
 
 
 @api.exception_handler(RateLimitExceeded)
@@ -79,17 +161,9 @@ async def general_exception_handler(request: Request, exc: Exception):
         content={"response": "An internal server error occurred. Please try again later."}
     )
 
-# Custom middleware to set X-Frame-Options header
-# @api.middleware("http")
-# async def allow_iframe_localhost(request: Request, call_next):
-#     response: Response = await call_next(request)
-
-#     # Only allow iframe embedding from localhost during local dev
-#     if request.client.host in ["127.0.0.1", "localhost"]:
-#         response.headers["X-Frame-Options"] = "ALLOWALL"
-
-#     return response
-
+@api.get("/health")
+def health():
+    return {"status": "ok"}
 
 @api.get("/chat-ui", response_class=HTMLResponse)
 async def serve_chat_ui():
@@ -107,16 +181,32 @@ async def serve_widget(request: Request):
     
 @traceable(name="RAG Support Chat")
 @api.post("/chat")
-@limiter.limit("1/minute")
+@limiter.limit("3/minute")
 async def chat(req: ChatRequest, request: Request):
 
-    logger.info(f"Received message: {req.message} from session: {req.session_id}")
+    session_id = request.state.session_id
+
+    if not session_id:
+        return JSONResponse(
+            status_code=400,
+            content={"response": "Missing session_id. Cannot proceed."}
+        )
+    
+    logger.info(f"[{session_id}] Received message: {req.message}")
+
+    # # Manually check session rate limit
+    # await limiter.limit("1/minute", key_func=session_key_func)(request)
+
+    # # Manually check IP rate limit
+    # await limiter.limit("1/minute", key_func=ip_key_func)(request)
 
     try:
         result = memory_chain.invoke(
             {"input" : req.message},
-            config = {
-                "configurable": { "session_id" : req.session_id }
+            config={
+            "tags": [f"session:{req.session_id}"],
+            "metadata": {"session_id": req.session_id},
+            "configurable": {"session_id": req.session_id}
             }
         )
 
