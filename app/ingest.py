@@ -19,9 +19,10 @@ def ingest_documents(filepath:str):
     loader = PyMuPDFLoader(filepath)
     documents = loader.load()
 
+    # A simple text splitter that creates chunks of 500 characters with an overlap of 50 characters between chunks. This can be replaced by a suitable splitter based on business knowledgebase.
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     chunks = splitter.split_documents(documents)
-    print(f"🔹 {len(chunks)} chunks created.")
+    print(f"- {len(chunks)} chunks created.")
 
     # Embeddings
     embeddings = get_gemini_embeddings()
