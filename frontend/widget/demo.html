@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plugin RAG demo - host site</title>
+<style>
+  body { font-family: system-ui, -apple-system, Arial, sans-serif;
+    max-width: 760px; margin: 40px auto; padding: 0 24px; color: #1e293b;
+    line-height: 1.65; }
+  h1 { letter-spacing: -.02em; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+  pre  { background: #0f172a; color: #e2e8f0; padding: 14px;
+    border-radius: 10px; overflow-x: auto; }
+  .hero { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff; padding: 32px 28px; border-radius: 18px;
+    box-shadow: 0 18px 35px -12px rgba(99,102,241,0.5); }
+  .hero h1 { margin: 0 0 6px 0; font-size: 28px; }
+  .hero p { margin: 0; opacity: 0.9; }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <h1>Demo host site</h1>
+    <p>This is a fake host site. The chat bubble in the corner is the entire
+    integration - one script tag added to this page.</p>
+  </div>
+
+  <h2>Try it</h2>
+  <p>Open the bubble and try a question that needs a knowledge-base lookup,
+  or a small-talk greeting that answers without a tool call. The starter
+  chips inside the widget are pulled from <code>config.yaml</code>.</p>
+
+  <h2>Embed it on your own site</h2>
+  <pre>&lt;script src="https://your-backend.example.com/widget.js" async&gt;&lt;/script&gt;</pre>
+
+  <script src="/widget.js" async></script>
+</body>
+</html>
