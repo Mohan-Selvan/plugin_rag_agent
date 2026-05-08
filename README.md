@@ -1,4 +1,4 @@
-# Plugin RAG
+# Plugin RAG Agent
 
 Self-hosted, plug-and-play RAG chatbot that drops into any website with
 one `<script>` tag. FastAPI + DeepAgents + Qdrant + your choice of LLM
