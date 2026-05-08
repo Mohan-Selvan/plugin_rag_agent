@@ -1,162 +1,191 @@
-# Plug-in RAG Agent
+# Plugin RAG
 
-A self-hosted AI support agent that drops into any website with a single script tag. Add one line of JavaScript to your site, point it at your own documents, and you have an AI assistant that answers customer questions grounded in your content. No frontend integration work required.
-
-## TL;DR
-
-Two halves:
-
-1. **A one-line embeddable widget** that mounts a floating chat panel into any webpage. No build step, no framework, no design changes - it overlays cleanly on whatever site it's added to.
-2. **A self-hostable RAG backend** that ingests your documents, retrieves the most relevant chunks per query, and answers with citations. Sessions, conversation memory, and rate limiting are built in.
-
-You host the backend once, hand the widget snippet to the site owner, and the site has a working AI assistant within minutes.
-
-## Embed it on a site
-
-Once the backend is running (see *Setup* below), adding the chatbot to any website is one line:
-
-```html
-<script src="https://your-backend.example.com/widget"></script>
-```
-
-That snippet:
-
-- Health-checks your backend.
-- Injects a floating chat iframe into the bottom-right of the page.
-- Connects it to your knowledge base.
-
-No npm install, no build pipeline, no template changes. It works on plain HTML, WordPress, Shopify, framework-built apps - anything that allows a `<script>` tag.
-
-A standalone chat UI is also available at `/chat-ui` if you prefer to host the chat as a dedicated page rather than a floating widget.
-
-## What you get out of the box
-
-- **Grounded answers.** Every reply is generated from chunks retrieved out of your own documents, not from the model's open-domain memory.
-- **Conversation memory.** Each visitor gets a session with token-bounded history, so follow-up questions work naturally.
-- **Rate limiting.** Per-session limits prevent abuse and keep cost predictable.
-- **Tracing for evaluation.** Every chat turn is recorded in LangSmith so you can review what the bot said, why it said it, and where it went wrong.
-
-## Architecture
+Self-hosted, plug-and-play RAG chatbot that drops into any website with
+one `<script>` tag. FastAPI + DeepAgents + Qdrant + your choice of LLM
+backend; Shadow-DOM widget with token-streamed answers, follow-up chips,
+and per-session history.
 
 ```mermaid
 flowchart LR
-    UI[Embedded widget on<br/>customer's website] -->|POST /chat| API[FastAPI]
-    API -->|history-aware<br/>retriever| LC[LangChain runnable]
-    LC -->|embed query| GE[Gemini embeddings]
-    GE --> Q[(Qdrant)]
-    LC -->|stuff docs prompt| LLM[Gemini chat model]
-    LLM --> API
-    API --> UI
-    API -.traces.-> LS[LangSmith]
+    HOST["Host site<br/>&lt;script src=...widget.js&gt;"]
+    WIDGET["Floating widget<br/>(Shadow DOM)"]
+    AGENT["DeepAgents + LangChain<br/>chat model"]
+    QDRANT["Qdrant +<br/>embeddings"]
+    DB[("aiosqlite<br/>session history")]
+
+    HOST -->|GET /widget.js| WIDGET
+    WIDGET -->|POST /chat<br/>SSE: tokens + suggestions| AGENT
+    AGENT <-->|knowledge_base_search| QDRANT
+    AGENT --> DB
 ```
 
-What each piece does:
-
-- **FastAPI** exposes `/chat`, `/health`, `/chat-ui`, `/widget` and serves static assets.
-- **Widget script** (`/widget`) injects a floating iframe into the host page after a backend health check.
-- **Session middleware** extracts a `session_id` from header, body, or query string and attaches it to `request.state` for downstream rate limiting and memory lookup.
-- **Rate limiter (slowapi)** is keyed per session (3 requests per minute on `/chat`).
-- **Memory manager** keeps a per-session `ConversationTokenBufferMemory` capped at 1024 tokens.
-- **History-aware retriever** rewrites the user query into a standalone question using prior turns, then performs MMR retrieval (`k=5`) over Qdrant.
-- **Stuff-docs chain** combines the retrieved context with the rewritten question and runs Gemini Flash for the final answer.
-- **LangSmith tracing** decorates the chat handler so every call is recorded for offline review.
-
-## Repo tour
-
-```
-.
-├── app/
-│   ├── main.py            # FastAPI app, routing, middleware, rate limiting
-│   ├── rag_chain.py       # history-aware retriever + stuff-docs chain
-│   ├── memory_manager.py  # per-session token-bounded conversation memory
-│   ├── embeddings.py      # Gemini embeddings wrapper
-│   └── ingest.py          # PDF -> chunks -> Qdrant ingestion
-├── data/
-│   └── org_policies.pdf   # fictional sample policy document
-├── frontend/
-│   └── iframe.html        # iframe wrapper for embedding the widget
-├── static/
-│   ├── chat_ui/           # standalone chat UI page
-│   ├── widgets/widget.js  # embeddable JS widget (served at /widget)
-│   └── debug/             # debug page
-└── requirements.txt
-```
-
-## Setup
-
-### 1. Install dependencies
+## Quickstart
 
 ```bash
-git clone https://github.com/Mohan-Selvan/rag_chatbot
-cd rag_chatbot
-
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+git clone <repo> plugin_rag && cd plugin_rag
+cp config/.env.example config/.env
+# Edit config/config.yaml (system_prompt + widget.*) and drop your
+# knowledge-base markdowns into ./data/
+docker compose up --build
 ```
 
-### 2. Configure environment
-
-Create a `.env` file at the repo root:
+Stack: `qdrant` + `api`. Plugin RAG does **not** bundle a local LLM
+server. If your config uses `ollama:*` models, run your own Ollama (or
+llama.cpp / vLLM / LM Studio) and set `OLLAMA_HOST` in `.env`:
 
 ```bash
-GOOGLE_API_KEY=your_gemini_api_key
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-COLLECTION_NAME=org-support-chat
-
-# Optional: enable LangSmith tracing
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=your_langsmith_api_key
-LANGCHAIN_PROJECT=rag-chatbot
+ollama serve &
+scripts/setup_ollama.sh   # pulls every ollama:* model from config.yaml
 ```
 
-### 3. Start Qdrant
+On boot the api verifies API keys / Ollama models / data folder, ingests
+once, then starts uvicorn on `:8000`.
+
+```
+http://localhost:8000/demo       # floating widget on a sample host page
+http://localhost:8000/chat-ui    # standalone full-window chat
+http://localhost:8000/health/ready
+```
+
+Re-ingest after editing `data/`:
 
 ```bash
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+docker compose run --rm api ingest --recreate
 ```
 
-### 4. Ingest your documents
-
-The default ingestion target is `data/org_policies.pdf`. Replace it with your own document, then run:
+Reset modes for fresh starts:
 
 ```bash
-python -m app.ingest
+RESET=1 docker compose up      # wipe chat history + drop+rebuild qdrant
+REINGEST=1 docker compose up   # drop+rebuild qdrant (keep chat history)
 ```
 
-This chunks the PDF (500-token chunks, 50-token overlap), embeds each chunk with Gemini, and writes vectors into the configured Qdrant collection.
-
-### 5. Start the API
-
-```bash
-uvicorn app.main:api --reload --port 8000
-```
-
-### 6. Add the widget to your site
-
-Once the API is running and reachable from your site, drop one line into the host page:
+## Embedding on a host site
 
 ```html
-<script src="https://your-backend.example.com/widget"></script>
+<script src="https://chatbot.example.com/widget.js" async></script>
 ```
 
-The widget endpoint is gated to approved client IPs by default; update the allowlist in `serve_widget` (`app/main.py`) to include the origin of any site you want to embed the widget on.
+Script attributes:
+- `data-backend="https://other.example"` - cross-origin backend
+- `data-mode="embed"` - render full-window, no floating bubble
 
-## Try the chat directly
+### Colour scheme
 
-Useful for testing without embedding:
+Default comes from `widget.primary_color` in `config.yaml`. Host sites
+can override per-page via query params on `/widget.js`:
+
+```html
+<!-- preset -->
+<script src="/widget.js?theme=ocean"></script>
+
+<!-- explicit hex (URL-encode the #) -->
+<script src="/widget.js?primary=%230e7490&secondary=%23213a51&tertiary=%238ecae6"></script>
+```
+
+Presets: `indigo` (default), `emerald`, `rose`, `amber`, `ocean`,
+`slate`.
+
+`primary` drives gradients and buttons. `secondary` is the gradient
+endpoint. `tertiary` controls the pulse-ring aura and chip hovers. Any
+slot you don't pass falls back to a derivation of primary. Bad values
+are silently ignored.
+
+## Switching use case
+
+Same code serves any RAG use case. To switch domains, edit only:
+
+1. `data/` - markdowns for the new domain
+2. `agent.system_prompt` - persona + behaviour
+3. `vector_store.tool_name` + `tool_description` - when-to-call hint
+4. `widget.*` - branding
+
+Re-run ingestion and restart. No Python changes.
+
+## Switching LLM provider
+
+```yaml
+agent:
+  model: openai:gpt-4o-mini    # or anthropic:..., google_genai:..., ollama:...
+embeddings:
+  model: openai:text-embedding-3-small
+```
 
 ```bash
-curl -X POST http://localhost:8000/chat \
-  -H 'Content-Type: application/json' \
-  -H 'x-session-id: demo-session-1' \
-  -d '{"message": "What is the return policy for software products?"}'
+# config/.env
+OPENAI_API_KEY=sk-...
+# OPENAI_BASE_URL=...   # optional, for OpenAI-compatible endpoints
 ```
 
-## Notes on the sample data
+## Configuration reference
 
-`data/org_policies.pdf` is a fictional sample document used to demonstrate the ingestion and retrieval flow. Replace it with your own document and re-run ingestion.
+`config/config.yaml` is fully annotated. Top-level blocks:
+
+| Block | Keys |
+|---|---|
+| `agent` | `model`, `temperature`, `model_kwargs`, `system_prompt` |
+| `ingestion` | `model`, `max_chunk_chars`, `chunk_overlap_chars`, `restructure` |
+| `embeddings` | `model` |
+| `vector_store` | `collection`, `top_k`, `score_threshold`, `tool_name`, `tool_description` |
+| `widget` | `title`, `subtitle`, `greeting`, `primary_color`, `secondary_color`, `tertiary_color`, `position`, `starter_questions` |
+| `sessions` | `sqlite_path`, `history_window`, `ttl_hours` |
+| `api` | `host`, `port`, `cors_origins` |
+| `rate_limit` | `enabled`, `requests_per_minute` |
+| `suggestions` | `enabled`, `max_items` |
+| `logging` | `file`, `max_bytes`, `backup_count` |
+
+Behind a reverse proxy: set `TRUST_PROXY=true` in `.env` so the rate
+limiter honours `X-Forwarded-For`.
+
+## API surface
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET  | `/health` | Liveness |
+| GET  | `/health/ready` | Probes Qdrant + Ollama (when configured); 503 if any fails |
+| GET  | `/widget.js` | Widget bundle (accepts `?theme=…&primary=…&secondary=…&tertiary=…`) |
+| GET  | `/widget/settings` | Widget branding as JSON (same params) |
+| GET  | `/chat-ui` | Standalone full-window chat page |
+| GET  | `/demo` | Sample host page with the floating widget |
+| GET  | `/chat/history?session_id=…&limit=50` | Replay a session's prior messages |
+| POST | `/chat` | SSE stream (`token` / `suggestions` / `done` / `error`); rate-limited per IP |
+
+## Repository layout
+
+```
+backend/
+  rag/        agent, retriever, ingestion, middlewares
+  server/     FastAPI app, routes, rate limit
+  database/   SQLite session store
+  config.py, utils.py
+frontend/widget/   widget.js + chat-ui.html + demo.html
+config/     config.yaml + .env (gitignored) + .env.example
+data/       knowledge-base markdowns (gitignored)
+storage/    sqlite + log + .ingested marker (gitignored)
+scripts/    bootstrap.sh + setup_ollama.sh + try_chat.sh + try_agent.py
+tests/      smoke + rate-limit tests
+```
+
+## Tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+Smoke tests don't require Qdrant or Ollama. Helpers in `scripts/`
+(`try_chat.sh`, `try_agent.py`) hit a running stack end-to-end.
 
 ## Contact
 
-mohanselvan.r.5814@gmail.com
+Built by Mohan Selvan. Reach out for questions, opportunities, or
+collaboration:
+
+- **Email:** mohanselvan.r.5814@gmail.com
+- **LinkedIn:** https://www.linkedin.com/in/mohanselvan/
+- **GitHub:** https://github.com/Mohan-Selvan
+- **Portfolio:** https://moganaselvan-481fc.web.app
+
+## License
+
+See `LICENSE`.
