@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chat</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; height: 100vh;
+    display: flex; flex-direction: column;
+    background: #fff; box-shadow: 0 0 40px rgba(0,0,0,0.06); }
+</style>
+</head>
+<body>
+  <div class="wrap" id="wrap"></div>
+  <script>
+    (function () {
+      var wrap = document.getElementById('wrap');
+      var s = document.createElement('script');
+      s.src = '/widget.js';
+      s.setAttribute('data-mode', 'embed');
+      document.body.appendChild(s);
+      var moved = false;
+      var iv = setInterval(function () {
+        var r = document.getElementById('plugin-rag-root');
+        if (r && !moved) {
+          wrap.appendChild(r);
+          moved = true;
+          clearInterval(iv);
+        }
+      }, 50);
+    })();
+  </script>
+</body>
+</html>
